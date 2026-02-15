@@ -2,6 +2,7 @@
 orders 表含自增 id，orderId 由服务按 id 生成（PX+id）；产品在子表 order_products.
 """
 
+import logging
 import os
 from uuid import UUID
 
@@ -207,5 +208,43 @@ def update_order_products_status(reference: UUID, status: str) -> None:
                 (status, str(reference)),
             )
         conn.commit()
+    finally:
+        conn.close()
+
+
+def run_scheduled_status_updates() -> None:
+    """按 created_at 将到期订单的产品状态更新：30 秒 -> shipped，60 秒 -> completed.
+    必须先执行 shipped->completed，再执行 pending->shipped，否则同一轮会从 pending 直接变成 completed.
+    """
+    conn = _get_conn()
+    try:
+        with conn.cursor() as cur:
+            # 先：shipped -> completed（60 秒到期）
+            cur.execute(
+                """
+                UPDATE order_products op
+                INNER JOIN orders o ON op.order_id = o.id
+                SET op.status = 'completed'
+                WHERE o.created_at <= NOW() - INTERVAL 60 SECOND
+                  AND op.status = 'shipped'
+                """
+            )
+            completed = cur.rowcount
+            # 再：pending -> shipped（30 秒到期），同一轮内不会再把刚变成 shipped 的立刻改成 completed
+            cur.execute(
+                """
+                UPDATE order_products op
+                INNER JOIN orders o ON op.order_id = o.id
+                SET op.status = 'shipped'
+                WHERE o.created_at <= NOW() - INTERVAL 30 SECOND
+                  AND op.status = 'pending'
+                """
+            )
+            shipped = cur.rowcount
+        conn.commit()
+        if shipped or completed:
+            logging.getLogger(__name__).debug(
+                "Scheduled status: shipped=%s, completed=%s", shipped, completed
+            )
     finally:
         conn.close()

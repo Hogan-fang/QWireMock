@@ -13,40 +13,34 @@ from qwire_mock.order_db import (
     get_order,
     init_db,
     order_exists,
+    run_scheduled_status_updates,
     save_order,
-    update_order_products_status,
 )
 from qwire_mock.schemas import OrderRequest, OrderResponse, ProductRequest, ProductResponse
 
 logger = logging.getLogger(__name__)
 
-DELAY_SHIPPED_SEC = 30
-DELAY_COMPLETED_SEC = 60  # 30s shipped + 再30s completed
+POLL_INTERVAL_SEC = 10  # 每 10 秒按 created_at 检查：30s -> shipped，60s -> completed
+_stop_poller = threading.Event()
 
 
-def _schedule_status_updates(reference: UUID) -> None:
-    """创建订单后：30 秒标记为 shipped，再 30 秒标记为 completed."""
-
-    def run_at(delay: float, status: str) -> None:
-        def task() -> None:
-            try:
-                update_order_products_status(reference, status)
-                logger.info("Order %s products status -> %s", reference, status)
-            except Exception as e:
-                logger.exception("Failed to update order %s to %s: %s", reference, status, e)
-
-        t = threading.Timer(delay, task)
-        t.daemon = True
-        t.start()
-
-    run_at(DELAY_SHIPPED_SEC, "shipped")
-    run_at(DELAY_COMPLETED_SEC, "completed")
+def _status_poller_thread() -> None:
+    """后台线程：按 created_at 将订单 30s 标 shipped、60s 标 completed."""
+    while not _stop_poller.is_set():
+        try:
+            run_scheduled_status_updates()
+        except Exception as e:
+            logger.exception("Status poller error: %s", e)
+        _stop_poller.wait(POLL_INTERVAL_SEC)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    poller = threading.Thread(target=_status_poller_thread, daemon=True)
+    poller.start()
     yield
+    _stop_poller.set()
 
 
 app = FastAPI(
@@ -85,7 +79,6 @@ def create_order(body: OrderRequest) -> OrderResponse:
     order = _order_request_to_response(body, order_id=None)
     order_id = save_order(order)
     order.orderId = order_id
-    _schedule_status_updates(body.reference)
     payload = order.model_dump(mode="json")
     logger.info("Order created:\n%s", json.dumps(payload, indent=2, ensure_ascii=False))
     return order
