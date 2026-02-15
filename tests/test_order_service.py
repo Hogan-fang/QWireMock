@@ -36,7 +36,7 @@ def test_create_order() -> None:
     assert data["products"][0]["count"] == 2
     assert data["products"][0]["spec"] == "xs-83"
     assert data["products"][0]["status"] == "pending"
-    assert "cardNumber" not in data  # 查询结果不显示卡号
+    assert "cardNumber" not in data  # Response must not include card number
     assert data["cvv"] == "123"
     assert data["expiry"] == "12/28"
     assert data["amount"] == 99.99

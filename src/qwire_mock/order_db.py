@@ -1,5 +1,5 @@
-"""MySQL persistence for orders. 数据库 qwire，用户 qwire.
-orders 表含自增 id，orderId 由服务按 id 生成（PX+id）；产品在子表 order_products.
+"""MySQL persistence for orders. DB: qwire, user: qwire.
+orders table has auto-increment id; orderId is generated as PX+id; products in order_products subtable.
 """
 
 import logging
@@ -30,7 +30,7 @@ def _get_conn(use_db: bool = True):
 
 
 def init_db() -> None:
-    """创建数据库（如不存在）、orders 表（含自增 id）与 order_products 子表."""
+    """Create database if not exists, orders table (with auto-increment id) and order_products subtable."""
     db_name = _MYSQL_CONFIG["database"]
     conn = _get_conn(use_db=False)
     try:
@@ -66,7 +66,7 @@ def init_db() -> None:
                     CREATE TABLE orders (
                         id INT AUTO_INCREMENT PRIMARY KEY,
                         reference VARCHAR(36) NOT NULL UNIQUE,
-                        order_id VARCHAR(64) UNIQUE COMMENT '业务单号 PX+id',
+                        order_id VARCHAR(64) UNIQUE COMMENT 'Business order number PX+id',
                         name VARCHAR(255),
                         order_date VARCHAR(64),
                         card_number VARCHAR(64),
@@ -97,7 +97,7 @@ def init_db() -> None:
 
 
 def save_order(order: OrderResponse) -> str:
-    """插入订单及子表产品，生成唯一 orderId = PX+id，返回该 orderId."""
+    """Insert order and product rows; generate unique orderId = PX+id; return that orderId."""
     conn = _get_conn()
     try:
         with conn.cursor() as cur:
@@ -136,7 +136,7 @@ def save_order(order: OrderResponse) -> str:
 
 
 def get_order(reference: UUID) -> OrderResponse | None:
-    """按 reference 查询订单（含子表产品）. 返回结果不包含卡号."""
+    """Load order by reference (with products from subtable). Response does not include card number."""
     conn = _get_conn()
     try:
         with conn.cursor() as cur:
@@ -183,7 +183,7 @@ def get_order(reference: UUID) -> OrderResponse | None:
 
 
 def order_exists(reference: UUID) -> bool:
-    """判断该 reference 的订单是否存在."""
+    """Return whether an order with this reference exists."""
     conn = _get_conn()
     try:
         with conn.cursor() as cur:
@@ -194,7 +194,7 @@ def order_exists(reference: UUID) -> bool:
 
 
 def update_order_products_status(reference: UUID, status: str) -> None:
-    """将该订单下所有产品的 status 更新为指定值（如 shipped / completed）."""
+    """Update all products for this order to the given status (e.g. shipped / completed)."""
     conn = _get_conn()
     try:
         with conn.cursor() as cur:
@@ -213,13 +213,13 @@ def update_order_products_status(reference: UUID, status: str) -> None:
 
 
 def run_scheduled_status_updates() -> None:
-    """按 created_at 将到期订单的产品状态更新：30 秒 -> shipped，60 秒 -> completed.
-    必须先执行 shipped->completed，再执行 pending->shipped，否则同一轮会从 pending 直接变成 completed.
+    """Update product status by created_at: 30s -> shipped, 60s -> completed.
+    Must run shipped->completed before pending->shipped so we do not jump pending->completed in one cycle.
     """
     conn = _get_conn()
     try:
         with conn.cursor() as cur:
-            # 先：shipped -> completed（60 秒到期）
+            # First: shipped -> completed (due at 60s)
             cur.execute(
                 """
                 UPDATE order_products op
@@ -230,7 +230,7 @@ def run_scheduled_status_updates() -> None:
                 """
             )
             completed = cur.rowcount
-            # 再：pending -> shipped（30 秒到期），同一轮内不会再把刚变成 shipped 的立刻改成 completed
+            # Then: pending -> shipped (due at 30s); same cycle won't turn newly shipped into completed
             cur.execute(
                 """
                 UPDATE order_products op

@@ -20,12 +20,12 @@ from qwire_mock.schemas import OrderRequest, OrderResponse, ProductRequest, Prod
 
 logger = logging.getLogger(__name__)
 
-POLL_INTERVAL_SEC = 10  # 每 10 秒按 created_at 检查：30s -> shipped，60s -> completed
+POLL_INTERVAL_SEC = 10  # Poll by created_at every 10s: 30s -> shipped, 60s -> completed
 _stop_poller = threading.Event()
 
 
 def _status_poller_thread() -> None:
-    """后台线程：按 created_at 将订单 30s 标 shipped、60s 标 completed."""
+    """Background thread: mark orders shipped at 30s and completed at 60s by created_at."""
     while not _stop_poller.is_set():
         try:
             run_scheduled_status_updates()
@@ -67,13 +67,13 @@ def _order_request_to_response(req: OrderRequest, order_id: str | None = None) -
         cvv=req.cvv,
         expiry=req.expiry,
         amount=req.amount,
-        cardNumber=req.cardNumber,  # 仅存储，响应中 exclude 不返回
+        cardNumber=req.cardNumber,  # Stored only; excluded from response
     )
 
 
 @app.post("/order", response_model=OrderResponse, status_code=201)
 def create_order(body: OrderRequest) -> OrderResponse:
-    """Add a new order to the system. orderId 由数据库自增 id 生成（PX+id）."""
+    """Add a new order to the system. orderId is generated from DB auto-increment id (PX+id)."""
     if order_exists(body.reference):
         raise HTTPException(status_code=409, detail="Order already exists")
     order = _order_request_to_response(body, order_id=None)

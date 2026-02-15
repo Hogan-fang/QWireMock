@@ -29,25 +29,25 @@ class OrderRequest(BaseModel):
     reference: UUID = Field(..., example="d290f1ee-6c54-4b01-90e6-d701748f0851")
     name: str = Field(..., example="Widget Adapter Order")
     callback: str = Field(..., example="http://www.xxx.com")
-    cardNumber: str = Field(..., description="卡号", example="4111111111111111")
+    cardNumber: str = Field(..., description="Card number", example="4111111111111111")
     cvv: str = Field(..., description="CVV", example="123")
-    expiry: str = Field(..., description="有效期，如 MM/YY", example="12/28")
-    amount: float = Field(..., description="金额", example=99.99)
+    expiry: str = Field(..., description="Expiry e.g. MM/YY", example="12/28")
+    amount: float = Field(..., description="Amount", example=99.99)
     products: list[ProductRequest] = Field(..., min_length=1)
 
 
 class OrderResponse(BaseModel):
-    """Order callback/check payload. 查询结果不包含卡号."""
+    """Order callback/check payload. Response does not include card number."""
 
     reference: UUID = Field(..., example="d290f1ee-6c54-4b01-90e6-d701748f0851")
     orderId: str | None = Field(None, example="PX39280930012")
     name: str | None = Field(None, example="Widget Adapter Order")
     orderDate: datetime | str | None = Field(None, example="2024-01-10T10:15:30Z")
     cvv: str | None = Field(None, description="CVV", example="123")
-    expiry: str | None = Field(None, description="有效期", example="12/28")
-    amount: float | None = Field(None, description="金额", example=99.99)
+    expiry: str | None = Field(None, description="Expiry", example="12/28")
+    amount: float | None = Field(None, description="Amount", example=99.99)
     products: list[ProductResponse] = Field(default_factory=list)
-    # 仅存储用，序列化时排除，查询结果不返回
+    # Stored only; excluded from serialization and response
     cardNumber: str | None = Field(None, exclude=True)
 
 
