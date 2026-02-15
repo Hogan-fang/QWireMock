@@ -1,10 +1,11 @@
-"""FastAPI app: callback (receive & cache by reference), check (return by reference)."""
+"""FastAPI app: callback (receive & cache by reference), check, list (all cached), clear (cache)."""
 
 import json
 import logging
 from uuid import UUID
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import Response
 
 from qwire_mock.schemas import OrderResponse, Received
 from qwire_mock.store import order_store
@@ -34,3 +35,27 @@ def check(reference: UUID = Query(..., description="Order reference (UUID)")) ->
     if order is None:
         raise HTTPException(status_code=404, detail="Order not found")
     return order
+
+
+@app.get("/list", response_model=None)
+def list_callbacks(
+    pretty: bool = Query(False, description="Return pretty-printed JSON for readability"),
+):
+    """List all cached callback data (received via POST /callback). Use ?pretty=1 for formatted output."""
+    data = order_store.list_all()
+    if pretty:  # Return indented JSON for human reading
+        content = json.dumps(
+            [o.model_dump(mode="json") for o in data],
+            indent=2,
+            ensure_ascii=False,
+        )
+        return Response(content=content, media_type="application/json")
+    return data
+
+
+@app.delete("/clear", response_model=dict)
+def clear_callbacks() -> dict:
+    """Clear all cached callback data."""
+    count = order_store.clear()
+    logger.info("Callback cache cleared: %s entries", count)
+    return {"message": "OK", "cleared": count}

@@ -28,6 +28,18 @@ class OrderStore:
                 return True
             return False
 
+    def list_all(self) -> list[OrderResponse]:
+        """Return all cached orders (no ordering guarantee)."""
+        with self._lock:
+            return list(self._data.values())
+
+    def clear(self) -> int:
+        """Remove all entries; return count of cleared entries."""
+        with self._lock:
+            n = len(self._data)
+            self._data.clear()
+            return n
+
 
 # Singleton used by API
 order_store = OrderStore()
