@@ -6,7 +6,10 @@ pydantic>=2.0.0
 # Test
 pytest>=7.0
 
+# MySQL（订单持久化，MySQL 8 需 cryptography 支持 caching_sha2_password）
+PyMySQL>=1.1.0
+cryptography>=41.0.0
+
 # 本地文件数据库（可选）
-# SQLite 无需安装，用 sqlite3 即可；若用 ORM 或文档库可安装：
 sqlalchemy>=2.0.0
 tinydb>=4.0.0

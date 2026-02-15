@@ -1,31 +1,32 @@
 """Tests for order API (create order, search order)."""
 
+import uuid
+
 from fastapi.testclient import TestClient
 
 from qwire_mock.order_service import app
 
 client = TestClient(app)
 
-_REF = "d290f1ee-6c54-4b01-90e6-d701748f0851"
-_ORDER_PAYLOAD = {
-    "reference": _REF,
-    "name": "Widget Adapter Order",
-    "callback": "http://www.xxx.com/callback",
-    "cardNumber": "4111111111111111",
-    "cvv": "123",
-    "expiry": "12/28",
-    "amount": 99.99,
-    "products": [
-        {"productId": "29838-02", "count": 2, "spec": "xs-83"},
-    ],
-}
-
 
 def test_create_order() -> None:
-    r = client.post("/order", json=_ORDER_PAYLOAD)
+    ref = str(uuid.uuid4())
+    payload = {
+        "reference": ref,
+        "name": "Widget Adapter Order",
+        "callback": "http://www.xxx.com/callback",
+        "cardNumber": "4111111111111111",
+        "cvv": "123",
+        "expiry": "12/28",
+        "amount": 99.99,
+        "products": [
+            {"productId": "29838-02", "count": 2, "spec": "xs-83"},
+        ],
+    }
+    r = client.post("/order", json=payload)
     assert r.status_code == 201
     data = r.json()
-    assert data["reference"] == _REF
+    assert data["reference"] == ref
     assert data["name"] == "Widget Adapter Order"
     assert data["orderId"] is not None
     assert data["orderId"].startswith("PX")
@@ -42,8 +43,9 @@ def test_create_order() -> None:
 
 
 def test_create_order_then_search() -> None:
+    ref = str(uuid.uuid4())
     payload = {
-        "reference": "e390f1ee-6c54-4b01-90e6-d701748f0852",
+        "reference": ref,
         "name": "Another Order",
         "callback": "http://example.com/cb",
         "cardNumber": "4242424242424242",
@@ -66,8 +68,9 @@ def test_create_order_then_search() -> None:
 
 
 def test_create_order_conflict() -> None:
+    ref = str(uuid.uuid4())
     payload = {
-        "reference": "f490f1ee-6c54-4b01-90e6-d701748f0853",
+        "reference": ref,
         "name": "First",
         "callback": "http://x.com",
         "cardNumber": "5555555555554444",

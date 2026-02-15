@@ -2,20 +2,49 @@
 
 import json
 import logging
+import threading
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import FastAPI, HTTPException, Query
 
-from qwire_mock.order_db import get_order, init_db, order_exists, save_order
+from qwire_mock.order_db import (
+    get_order,
+    init_db,
+    order_exists,
+    save_order,
+    update_order_products_status,
+)
 from qwire_mock.schemas import OrderRequest, OrderResponse, ProductRequest, ProductResponse
 
 logger = logging.getLogger(__name__)
 
+DELAY_SHIPPED_SEC = 30
+DELAY_COMPLETED_SEC = 60  # 30s shipped + 再30s completed
+
+
+def _schedule_status_updates(reference: UUID) -> None:
+    """创建订单后：30 秒标记为 shipped，再 30 秒标记为 completed."""
+
+    def run_at(delay: float, status: str) -> None:
+        def task() -> None:
+            try:
+                update_order_products_status(reference, status)
+                logger.info("Order %s products status -> %s", reference, status)
+            except Exception as e:
+                logger.exception("Failed to update order %s to %s: %s", reference, status, e)
+
+        t = threading.Timer(delay, task)
+        t.daemon = True
+        t.start()
+
+    run_at(DELAY_SHIPPED_SEC, "shipped")
+    run_at(DELAY_COMPLETED_SEC, "completed")
+
 
 @asynccontextmanager
-def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI):
     init_db()
     yield
 
@@ -28,13 +57,7 @@ app = FastAPI(
 )
 
 
-def _generate_order_id() -> str:
-    """Generate orderId (e.g. PX39280930012)."""
-    ts = datetime.now(tz=timezone.utc).strftime("%Y%m%d%H%M%S")
-    return f"PX{ts}"
-
-
-def _order_request_to_response(req: OrderRequest, order_id: str) -> OrderResponse:
+def _order_request_to_response(req: OrderRequest, order_id: str | None = None) -> OrderResponse:
     """Build OrderResponse from OrderRequest with generated orderId and orderDate."""
     order_date = datetime.now(tz=timezone.utc).isoformat().replace("+00:00", "Z")
     products = [
@@ -56,12 +79,13 @@ def _order_request_to_response(req: OrderRequest, order_id: str) -> OrderRespons
 
 @app.post("/order", response_model=OrderResponse, status_code=201)
 def create_order(body: OrderRequest) -> OrderResponse:
-    """Add a new order to the system."""
+    """Add a new order to the system. orderId 由数据库自增 id 生成（PX+id）."""
     if order_exists(body.reference):
         raise HTTPException(status_code=409, detail="Order already exists")
-    order_id = _generate_order_id()
-    order = _order_request_to_response(body, order_id)
-    save_order(order)
+    order = _order_request_to_response(body, order_id=None)
+    order_id = save_order(order)
+    order.orderId = order_id
+    _schedule_status_updates(body.reference)
     payload = order.model_dump(mode="json")
     logger.info("Order created:\n%s", json.dumps(payload, indent=2, ensure_ascii=False))
     return order
