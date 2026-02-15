@@ -1,0 +1,12 @@
+# QWire Mock - Production dependencies
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+pydantic>=2.0.0
+
+# Test
+pytest>=7.0
+
+# 本地文件数据库（可选）
+# SQLite 无需安装，用 sqlite3 即可；若用 ORM 或文档库可安装：
+sqlalchemy>=2.0.0
+tinydb>=4.0.0

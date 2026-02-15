@@ -1,0 +1,155 @@
+openapi: 3.0.0
+
+info:
+  title: Callback API
+  version: "1.0.0"
+  description: This is a simple callback API
+  contact:
+    email: you@your-company.com
+  license:
+    name: Apache 2.0
+    url: http://www.apache.org/licenses/LICENSE-2.0.html
+
+servers:
+  - url: https://api.example.com/v1
+    description: Production server
+  - url: https://virtserver.swaggerhub.com/HOGANHFANG/callback/1.0.0
+    description: SwaggerHub API Auto Mocking
+
+paths:
+  /check:
+    get:
+      summary: Check order callback
+      operationId: check
+      description: Check the callback infomation
+      parameters:
+        - in: query
+          name: reference
+          description: Order reference (UUID)
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Order found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '400':
+          description: Invalid input parameter
+        '404':
+          description: Order not found
+  /callback:
+    post:
+      summary: order status callback
+      operationId: callback
+      description: Receive callback from order system
+      requestBody:
+        description: Callback info
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderResponse'
+      responses:
+        '200':
+          description: Received
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Received'
+        '400':
+          description: Invalid information
+        '409':
+          description: Order not exist
+
+components:
+
+  schemas:
+    # =========================
+    # Received Schemas
+    # =========================
+    Received:
+      type: object
+      properties:
+        message:
+          type: string
+          format: string
+          example: OK
+
+    # =========================
+    # Order Schemas
+    # =========================
+
+    OrderResponse:
+      type: object
+      description: 查询/回调结果不包含卡号
+      properties:
+        reference:
+          type: string
+          format: uuid
+          example: d290f1ee-6c54-4b01-90e6-d701748f0851
+        orderId:
+          type: string
+          format: string
+          example: PX39280930012
+        name:
+          type: string
+          example: Widget Adapter Order
+        orderDate:
+          type: string
+          format: date-time
+          example: 2024-01-10T10:15:30Z
+        cvv:
+          type: string
+          description: CVV
+          example: "123"
+        expiry:
+          type: string
+          description: 有效期
+          example: "12/28"
+        amount:
+          type: number
+          format: double
+          description: 金额
+          example: 99.99
+        products:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProductResponse'
+
+    # =========================
+    # Product Schemas
+    # =========================
+
+    ProductBase:
+      type: object
+      required:
+        - productId
+        - count
+        - spec
+      properties:
+        productId:
+          type: string
+          example: 29838-02
+        count:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 100
+          example: 2
+        spec:
+          type: string
+          example: xs-83
+
+    ProductResponse:
+      allOf:
+        - $ref: '#/components/schemas/ProductBase'
+        - type: object
+          properties:
+            status:
+              type: string
+              description: Product processing status
+              example: shipped
