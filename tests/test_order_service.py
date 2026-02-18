@@ -92,8 +92,7 @@ def test_create_order_conflict() -> None:
     r = client.post("/order", json=payload)
     assert r.status_code == 400
     data = r.json()
-    # Existing order keeps its real status (PROCESSING), not overwritten to FAIL
-    assert data["status"] == "PROCESSING"
+    assert data["status"] == "FAIL"
     assert data["reason"] == "Order already exists"
     assert data["reference"] == ref
     assert data["orderId"] is not None
@@ -114,8 +113,11 @@ def test_search_order_invalid_uuid() -> None:
 
 def test_search_order_not_found() -> None:
     r = client.get("/order", params={"reference": "00000000-0000-0000-0000-000000000000"})
-    assert r.status_code == 404
-    assert "not found" in r.json()["detail"].lower()
+    assert r.status_code == 400
+    data = r.json()
+    assert data["status"] == "FAIL"
+    assert data["reason"] == "Order not found"
+    assert "detail" not in data
 
 
 def test_create_order_invalid_card_starts_with_4() -> None:

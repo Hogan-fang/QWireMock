@@ -288,14 +288,27 @@ def update_order_products_status(reference: UUID, status: str) -> None:
         conn.close()
 
 
-def run_scheduled_status_updates() -> None:
+def run_scheduled_status_updates() -> list[str]:
     """Update product status by created_at: 30s -> shipped, 60s -> complete.
     Must run shipped->complete before pending->shipped so we do not jump pending->complete in one cycle.
+    Returns list of order references that had status changes (for callback notification).
     """
+    updated_refs: list[str] = []
     conn = _get_conn()
     try:
         with conn.cursor() as cur:
             # First: shipped -> complete (due at 60s); only for orders in processing
+            cur.execute(
+                """
+                SELECT DISTINCT o.reference
+                FROM orders o
+                INNER JOIN order_products op ON op.order_id = o.id
+                WHERE o.status = 'processing'
+                  AND o.created_at <= NOW() - INTERVAL 60 SECOND
+                  AND op.status = 'shipped'
+                """
+            )
+            refs_complete = [r["reference"] for r in cur.fetchall()]
             cur.execute(
                 """
                 UPDATE order_products op
@@ -307,7 +320,20 @@ def run_scheduled_status_updates() -> None:
                 """
             )
             complete_count = cur.rowcount
+            updated_refs.extend(refs_complete)
+
             # Then: pending -> shipped (due at 30s); only for orders in processing
+            cur.execute(
+                """
+                SELECT DISTINCT o.reference
+                FROM orders o
+                INNER JOIN order_products op ON op.order_id = o.id
+                WHERE o.status = 'processing'
+                  AND o.created_at <= NOW() - INTERVAL 30 SECOND
+                  AND op.status = 'pending'
+                """
+            )
+            refs_shipped = [r["reference"] for r in cur.fetchall()]
             cur.execute(
                 """
                 UPDATE order_products op
@@ -319,7 +345,21 @@ def run_scheduled_status_updates() -> None:
                 """
             )
             shipped = cur.rowcount
+            updated_refs.extend(refs_shipped)
+
             # Set order status to complete when all its products are complete
+            cur.execute(
+                """
+                SELECT o.reference
+                FROM orders o
+                WHERE o.status = 'processing'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM order_products op
+                    WHERE op.order_id = o.id AND op.status != 'complete'
+                  )
+                """
+            )
+            refs_order_complete = [r["reference"] for r in cur.fetchall()]
             cur.execute(
                 """
                 UPDATE orders o
@@ -331,6 +371,7 @@ def run_scheduled_status_updates() -> None:
                   )
                 """
             )
+            updated_refs.extend(refs_order_complete)
         conn.commit()
         if shipped or complete_count:
             logging.getLogger(__name__).debug(
@@ -338,3 +379,4 @@ def run_scheduled_status_updates() -> None:
             )
     finally:
         conn.close()
+    return list(dict.fromkeys(updated_refs))  # preserve order, dedupe

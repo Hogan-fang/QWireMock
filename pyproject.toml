@@ -43,6 +43,9 @@ target-version = "py39"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+    "integration: integration tests (start callback + order servers, need MySQL, ~75s)",
+]
 filterwarnings = [
     "ignore::pytest.PytestAssertRewriteWarning",
 ]

@@ -2,12 +2,14 @@
 
 import json
 import logging
+import os
 import threading
+import urllib.request
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse
 
 from qwire_mock.order_db import (
@@ -25,12 +27,43 @@ logger = logging.getLogger(__name__)
 POLL_INTERVAL_SEC = 10  # Poll by created_at every 10s: 30s -> shipped, 60s -> complete
 _stop_poller = threading.Event()
 
+# Callback service base URL for notifying on status change (e.g. http://localhost:8000)
+CALLBACK_SERVICE_URL = os.environ.get("CALLBACK_SERVICE_URL", "http://localhost:8000").rstrip("/")
+
+
+def _notify_callback_service(references: list[str]) -> None:
+    """POST order payload to callback service for each reference (after status flip to shipped/complete)."""
+    for ref in references:
+        try:
+            order = get_order(UUID(ref))
+            if order is None:
+                continue
+            payload = order.model_dump(mode="json")
+            if order.fail_reason is None:
+                payload.pop("fail_reason", None)
+            body = json.dumps(payload).encode("utf-8")
+            req = urllib.request.Request(
+                f"{CALLBACK_SERVICE_URL}/callback",
+                data=body,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                if 200 <= resp.status < 300:
+                    logger.info("Callback notified for order %s", ref)
+                else:
+                    logger.warning("Callback returned %s for order %s", resp.status, ref)
+        except Exception as e:
+            logger.exception("Callback notify failed for %s: %s", ref, e)
+
 
 def _status_poller_thread() -> None:
-    """Background thread: mark orders shipped at 30s and complete at 60s by created_at."""
+    """Background thread: mark orders shipped at 30s and complete at 60s by created_at; notify callback service."""
     while not _stop_poller.is_set():
         try:
-            run_scheduled_status_updates()
+            updated_refs = run_scheduled_status_updates()
+            if updated_refs:
+                _notify_callback_service(updated_refs)
         except Exception as e:
             logger.exception("Status poller error: %s", e)
         _stop_poller.wait(POLL_INTERVAL_SEC)
@@ -91,11 +124,9 @@ def create_order(body: OrderRequest) -> OrderResponse:
     if order_exists(body.reference):
         existing = get_order(body.reference)
         order_flat = existing.model_dump(mode="json") if existing else {}
-        order_flat["status"] = (order_flat.get("status") or "").upper()
-        # Do not overlay status: keep the existing order's real status (e.g. COMPLETE)
         return JSONResponse(
             status_code=400,
-            content={**order_flat, "reason": "Order already exists"},
+            content={**order_flat, "status": "FAIL", "reason": "Order already exists"},
         )
     order = _order_request_to_response(body, order_id=None)
     order_id = save_order(order, status="processing")
@@ -122,7 +153,10 @@ def search_order(
         )
     order = get_order(ref_uuid)
     if order is None:
-        raise HTTPException(status_code=404, detail="Order not found")
+        return JSONResponse(
+            status_code=400,
+            content={"status": "FAIL", "reason": "Order not found"},
+        )
 
     payload = order.model_dump(mode="json")
     if order.fail_reason is None:
