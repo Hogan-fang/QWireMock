@@ -101,9 +101,11 @@ def create_order(body: OrderRequest) -> OrderResponse:
     order_id = save_order(order, status="processing")
     order.orderId = order_id
     order.status = "PROCESSING"
+
     payload = order.model_dump(mode="json")
+    payload.pop("fail_reason", None)
     logger.info("Order created:\n%s", json.dumps(payload, indent=2, ensure_ascii=False))
-    return order
+    return JSONResponse(status_code=201, content=payload)
 
 
 @app.get("/order", response_model=OrderResponse)
@@ -121,4 +123,10 @@ def search_order(
     order = get_order(ref_uuid)
     if order is None:
         raise HTTPException(status_code=404, detail="Order not found")
-    return order
+
+    payload = order.model_dump(mode="json")
+    if order.fail_reason is None:
+        payload.pop("fail_reason", None)
+
+    return JSONResponse(content=payload)
+
