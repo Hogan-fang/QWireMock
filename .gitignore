@@ -66,6 +66,9 @@ Thumbs.db
 # Logs
 *.log
 
+# Generated docs (e.g. Order服务说明.docx)
+*.docx
+
 # SQLite
 *.db
 
