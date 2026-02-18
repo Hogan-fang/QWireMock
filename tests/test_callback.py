@@ -16,6 +16,7 @@ def test_callback_then_check() -> None:
         "cvv": "123",
         "expiry": "12/28",
         "amount": 99.99,
+        "currency": "USD",
         "products": [
             {"productId": "29838-02", "count": 2, "spec": "xs-83", "status": "shipped"},
         ],
@@ -28,6 +29,8 @@ def test_callback_then_check() -> None:
     assert r2.status_code == 200
     assert r2.json()["reference"] == "d290f1ee-6c54-4b01-90e6-d701748f0851"
     assert r2.json()["orderId"] == "PX39280930012"
+    assert "cvv" not in r2.json()
+    assert "expiry" not in r2.json()
     assert len(r2.json()["products"]) == 1
 
 

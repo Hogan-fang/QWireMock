@@ -85,7 +85,7 @@ components:
 
     OrderResponse:
       type: object
-      description: 查询/回调结果不包含卡号
+      description: 查询/回调结果返回掩码卡号（前6后4），不包含CVV与有效期
       properties:
         reference:
           type: string
@@ -102,19 +102,28 @@ components:
           type: string
           format: date-time
           example: 2024-01-10T10:15:30Z
-        cvv:
-          type: string
-          description: CVV
-          example: "123"
-        expiry:
-          type: string
-          description: 有效期
-          example: "12/28"
         amount:
           type: number
           format: double
           description: 金额
           example: 99.99
+        currency:
+          type: string
+          description: 币种
+          example: "USD"
+        status:
+          type: string
+          description: Order status (uppercase)
+          enum: [PROCESSING, FAIL, COMPLETE]
+          example: PROCESSING
+        fail_reason:
+          type: string
+          description: 失败原因，仅 status 为 FAIL 时有值
+          nullable: true
+        cardNumber:
+          type: string
+          description: 掩码卡号（前6后4位可见）
+          example: "555555******4444"
         products:
           type: array
           items:
@@ -151,5 +160,5 @@ components:
           properties:
             status:
               type: string
-              description: Product processing status
+              description: Product status (pending, shipped, complete)
               example: shipped

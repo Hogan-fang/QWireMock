@@ -29,6 +29,19 @@ def _get_conn(use_db: bool = True):
     return pymysql.connect(**kwargs)
 
 
+def _mask_card_number(card: str) -> str:
+    """Mask card number: keep first 6 and last 4 characters, replace middle with *."""
+    if not card:
+        return ""
+    card = card.strip()
+    n = len(card)
+    if n >= 10:
+        return card[:6] + "*" * (n - 10) + card[-4:]
+    if n >= 4:
+        return card[:2] + "*" * (n - 4) + card[-2:]
+    return "*" * n
+
+
 def init_db() -> None:
     """Create database if not exists, orders table (with auto-increment id) and order_products subtable."""
     db_name = _MYSQL_CONFIG["database"]
@@ -70,13 +83,58 @@ def init_db() -> None:
                         name VARCHAR(255),
                         order_date VARCHAR(64),
                         card_number VARCHAR(64),
-                        cvv VARCHAR(16),
-                        expiry VARCHAR(16),
                         amount DOUBLE,
+                        currency VARCHAR(16) DEFAULT 'USD',
+                        status VARCHAR(32) DEFAULT 'processing',
+                        fail_reason VARCHAR(255) DEFAULT NULL,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                     """
                 )
+            # Migrate: add status column if missing (existing tables from before status was added)
+            db_name = _MYSQL_CONFIG["database"]
+            cur.execute(
+                "SELECT COUNT(*) AS n FROM information_schema.columns "
+                "WHERE table_schema = %s AND table_name = 'orders' AND column_name = 'status'",
+                (db_name,),
+            )
+            row = cur.fetchone()
+            has_status = (row.get("n") or row.get("N") or 0) != 0
+            if not has_status:
+                cur.execute("ALTER TABLE orders ADD COLUMN status VARCHAR(32) DEFAULT 'processing'")
+                conn.commit()
+            # Migrate: add currency column if missing
+            cur.execute(
+                "SELECT COUNT(*) AS n FROM information_schema.columns "
+                "WHERE table_schema = %s AND table_name = 'orders' AND column_name = 'currency'",
+                (db_name,),
+            )
+            row_cur = cur.fetchone()
+            has_currency = (row_cur.get("n") or row_cur.get("N") or 0) != 0
+            if not has_currency:
+                cur.execute("ALTER TABLE orders ADD COLUMN currency VARCHAR(16) DEFAULT 'USD'")
+                conn.commit()
+            # Migrate: add fail_reason column if missing, or rename failreason -> fail_reason
+            cur.execute(
+                "SELECT COUNT(*) AS n FROM information_schema.columns "
+                "WHERE table_schema = %s AND table_name = 'orders' AND column_name = 'fail_reason'",
+                (db_name,),
+            )
+            row_fr = cur.fetchone()
+            has_fail_reason = (row_fr.get("n") or row_fr.get("N") or 0) != 0
+            if not has_fail_reason:
+                cur.execute(
+                    "SELECT COUNT(*) AS n FROM information_schema.columns "
+                    "WHERE table_schema = %s AND table_name = 'orders' AND column_name = 'failreason'",
+                    (db_name,),
+                )
+                row_old = cur.fetchone()
+                has_old = (row_old.get("n") or row_old.get("N") or 0) != 0
+                if has_old:
+                    cur.execute("ALTER TABLE orders CHANGE COLUMN failreason fail_reason VARCHAR(255) DEFAULT NULL")
+                else:
+                    cur.execute("ALTER TABLE orders ADD COLUMN fail_reason VARCHAR(255) DEFAULT NULL")
+                conn.commit()
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS order_products (
@@ -96,7 +154,11 @@ def init_db() -> None:
         conn.close()
 
 
-def save_order(order: OrderResponse) -> str:
+def save_order(
+    order: OrderResponse,
+    status: str = "processing",
+    fail_reason: str | None = None,
+) -> str:
     """Insert order and product rows; generate unique orderId = PX+id; return that orderId."""
     conn = _get_conn()
     try:
@@ -104,30 +166,38 @@ def save_order(order: OrderResponse) -> str:
             cur.execute(
                 """
                 INSERT INTO orders (
-                    reference, name, order_date, card_number, cvv, expiry, amount
+                    reference, name, order_date, card_number, amount, currency, status, fail_reason
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     str(order.reference),
                     order.name or "",
                     str(order.orderDate) if order.orderDate else "",
-                    getattr(order, "cardNumber", None) or "",
-                    order.cvv or "",
-                    order.expiry or "",
+                    _mask_card_number(getattr(order, "cardNumber", None) or ""),
                     float(order.amount) if order.amount is not None else 0.0,
+                    getattr(order, "currency", None) or "USD",
+                    (status or "processing").lower(),
+                    fail_reason or None,
                 ),
             )
             pk = cur.lastrowid
             order_id = f"PX{pk}"
             cur.execute("UPDATE orders SET order_id = %s WHERE id = %s", (order_id, pk))
+            order_status_lower = (status or "processing").lower()
+            product_status_default = "fail" if order_status_lower == "fail" else "pending"
             for p in order.products:
+                p_status = (
+                    "fail"
+                    if order_status_lower == "fail"
+                    else ((p.status or product_status_default).lower())
+                )
                 cur.execute(
                     """
                     INSERT INTO order_products (order_id, product_id, count, spec, status)
                     VALUES (%s, %s, %s, %s, %s)
                     """,
-                    (pk, p.productId, p.count, p.spec or "", p.status or "pending"),
+                    (pk, p.productId, p.count, p.spec or "", p_status),
                 )
         conn.commit()
         return order_id
@@ -142,7 +212,7 @@ def get_order(reference: UUID) -> OrderResponse | None:
         with conn.cursor() as cur:
             cur.execute(
                 """SELECT id, reference, order_id, name, order_date,
-                          card_number, cvv, expiry, amount
+                          card_number, amount, currency, status, fail_reason
                    FROM orders WHERE reference = %s""",
                 (str(reference),),
             )
@@ -160,25 +230,31 @@ def get_order(reference: UUID) -> OrderResponse | None:
     finally:
         conn.close()
 
+    def _upper(s: str | None) -> str | None:
+        return s.upper() if s else None
+
     products = [
         ProductResponse(
             productId=r["product_id"],
             count=r["count"],
             spec=r["spec"] or "",
-            status=r["status"] or None,
+            status=_upper(r.get("status")),
         )
         for r in product_rows
     ]
+    raw_status = (row.get("status") or "").strip().lower()
+    fail_reason_value = (row.get("fail_reason") or None) if raw_status == "fail" else None
     return OrderResponse(
         reference=UUID(row["reference"]),
         orderId=row["order_id"],
         name=row["name"],
         orderDate=row["order_date"],
         products=products,
-        cvv=row["cvv"] or None,
-        expiry=row["expiry"] or None,
         amount=float(row["amount"]) if row["amount"] is not None else None,
-        cardNumber=None,
+        currency=row.get("currency") or "USD",
+        status=raw_status.upper() if raw_status else None,
+        fail_reason=fail_reason_value,
+        cardNumber=row.get("card_number") or None,
     )
 
 
@@ -194,7 +270,7 @@ def order_exists(reference: UUID) -> bool:
 
 
 def update_order_products_status(reference: UUID, status: str) -> None:
-    """Update all products for this order to the given status (e.g. shipped / completed)."""
+    """Update all products for this order to the given status (e.g. shipped / complete). Stores lowercase."""
     conn = _get_conn()
     try:
         with conn.cursor() as cur:
@@ -205,7 +281,7 @@ def update_order_products_status(reference: UUID, status: str) -> None:
                 SET op.status = %s
                 WHERE o.reference = %s
                 """,
-                (status, str(reference)),
+                ((status or "").lower(), str(reference)),
             )
         conn.commit()
     finally:
@@ -213,38 +289,52 @@ def update_order_products_status(reference: UUID, status: str) -> None:
 
 
 def run_scheduled_status_updates() -> None:
-    """Update product status by created_at: 30s -> shipped, 60s -> completed.
-    Must run shipped->completed before pending->shipped so we do not jump pending->completed in one cycle.
+    """Update product status by created_at: 30s -> shipped, 60s -> complete.
+    Must run shipped->complete before pending->shipped so we do not jump pending->complete in one cycle.
     """
     conn = _get_conn()
     try:
         with conn.cursor() as cur:
-            # First: shipped -> completed (due at 60s)
+            # First: shipped -> complete (due at 60s); only for orders in processing
             cur.execute(
                 """
                 UPDATE order_products op
                 INNER JOIN orders o ON op.order_id = o.id
-                SET op.status = 'completed'
-                WHERE o.created_at <= NOW() - INTERVAL 60 SECOND
+                SET op.status = 'complete'
+                WHERE o.status = 'processing'
+                  AND o.created_at <= NOW() - INTERVAL 60 SECOND
                   AND op.status = 'shipped'
                 """
             )
-            completed = cur.rowcount
-            # Then: pending -> shipped (due at 30s); same cycle won't turn newly shipped into completed
+            complete_count = cur.rowcount
+            # Then: pending -> shipped (due at 30s); only for orders in processing
             cur.execute(
                 """
                 UPDATE order_products op
                 INNER JOIN orders o ON op.order_id = o.id
                 SET op.status = 'shipped'
-                WHERE o.created_at <= NOW() - INTERVAL 30 SECOND
+                WHERE o.status = 'processing'
+                  AND o.created_at <= NOW() - INTERVAL 30 SECOND
                   AND op.status = 'pending'
                 """
             )
             shipped = cur.rowcount
+            # Set order status to complete when all its products are complete
+            cur.execute(
+                """
+                UPDATE orders o
+                SET o.status = 'complete'
+                WHERE o.status = 'processing'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM order_products op
+                    WHERE op.order_id = o.id AND op.status != 'complete'
+                  )
+                """
+            )
         conn.commit()
-        if shipped or completed:
+        if shipped or complete_count:
             logging.getLogger(__name__).debug(
-                "Scheduled status: shipped=%s, completed=%s", shipped, completed
+                "Scheduled status: shipped=%s, complete=%s", shipped, complete_count
             )
     finally:
         conn.close()

@@ -15,10 +15,11 @@ def test_create_order() -> None:
         "reference": ref,
         "name": "Widget Adapter Order",
         "callback": "http://www.xxx.com/callback",
-        "cardNumber": "4111111111111111",
+        "cardNumber": "5555555555554444",
         "cvv": "123",
         "expiry": "12/28",
         "amount": 99.99,
+        "currency": "USD",
         "products": [
             {"productId": "29838-02", "count": 2, "spec": "xs-83"},
         ],
@@ -35,11 +36,13 @@ def test_create_order() -> None:
     assert data["products"][0]["productId"] == "29838-02"
     assert data["products"][0]["count"] == 2
     assert data["products"][0]["spec"] == "xs-83"
-    assert data["products"][0]["status"] == "pending"
-    assert "cardNumber" not in data  # Response must not include card number
-    assert data["cvv"] == "123"
-    assert data["expiry"] == "12/28"
+    assert data["products"][0]["status"] == "PENDING"
+    assert data["status"] == "PROCESSING"
+    assert data["cardNumber"] == "555555******4444"  # Masked (first 6 + last 4)
+    assert "cvv" not in data
+    assert "expiry" not in data
     assert data["amount"] == 99.99
+    assert data["currency"] == "USD"
 
 
 def test_create_order_then_search() -> None:
@@ -48,10 +51,11 @@ def test_create_order_then_search() -> None:
         "reference": ref,
         "name": "Another Order",
         "callback": "http://example.com/cb",
-        "cardNumber": "4242424242424242",
+        "cardNumber": "5555555555554444",
         "cvv": "456",
         "expiry": "06/27",
         "amount": 199.0,
+        "currency": "EUR",
         "products": [{"productId": "A1", "count": 1, "spec": "m"}],
     }
     r1 = client.post("/order", json=payload)
@@ -63,8 +67,12 @@ def test_create_order_then_search() -> None:
     assert r2.json()["reference"] == ref
     assert r2.json()["name"] == "Another Order"
     assert r2.json()["orderId"] == r1.json()["orderId"]
-    assert "cardNumber" not in r2.json()
+    assert r2.json()["status"] == "PROCESSING"
+    assert r2.json()["cardNumber"] == "555555******4444"  # Masked
+    assert "cvv" not in r2.json()
+    assert "expiry" not in r2.json()
     assert r2.json()["amount"] == 199.0
+    assert r2.json()["currency"] == "EUR"
 
 
 def test_create_order_conflict() -> None:
@@ -77,18 +85,68 @@ def test_create_order_conflict() -> None:
         "cvv": "789",
         "expiry": "01/30",
         "amount": 50.0,
+        "currency": "USD",
         "products": [{"productId": "P1", "count": 1, "spec": "s"}],
     }
     client.post("/order", json=payload)
     r = client.post("/order", json=payload)
-    assert r.status_code == 409
-    assert "already exists" in r.json()["detail"].lower()
+    assert r.status_code == 400
+    data = r.json()
+    # Existing order keeps its real status (PROCESSING), not overwritten to FAIL
+    assert data["status"] == "PROCESSING"
+    assert data["reason"] == "Order already exists"
+    assert data["reference"] == ref
+    assert data["orderId"] is not None
+    assert data["cardNumber"] == "555555******4444"  # Masked in existing order
+    assert "cvv" not in data
+    assert "expiry" not in data
+
+
+def test_search_order_invalid_uuid() -> None:
+    """Invalid reference (not a valid UUID) returns 400 with status FAIL and reason invalid UUID string."""
+    r = client.get("/order", params={"reference": "1aba8bca-a65b-4954-b459-6757591"})
+    assert r.status_code == 400
+    data = r.json()
+    assert data["status"] == "FAIL"
+    assert data["reason"] == "invalid UUID string"
+    assert "detail" not in data
 
 
 def test_search_order_not_found() -> None:
     r = client.get("/order", params={"reference": "00000000-0000-0000-0000-000000000000"})
     assert r.status_code == 404
     assert "not found" in r.json()["detail"].lower()
+
+
+def test_create_order_invalid_card_starts_with_4() -> None:
+    """Card number starting with 4 returns 400 with status FAIL and reason Invalid card."""
+    ref = str(uuid.uuid4())
+    payload = {
+        "reference": ref,
+        "name": "Invalid Card Order",
+        "callback": "http://example.com/cb",
+        "cardNumber": "4111111111111111",
+        "cvv": "123",
+        "expiry": "12/28",
+        "amount": 99.99,
+        "currency": "USD",
+        "products": [{"productId": "X1", "count": 1, "spec": "s"}],
+    }
+    r = client.post("/order", json=payload)
+    assert r.status_code == 400
+    data = r.json()
+    assert data["status"] == "FAIL"
+    assert data["reason"] == "Invalid card"
+    assert data["reference"] == ref
+    assert data["cardNumber"] == "4111111111111111"
+    assert "cvv" not in data
+    assert "expiry" not in data
+
+    # GET the failed order by reference returns fail_reason and status FAIL
+    r2 = client.get("/order", params={"reference": ref})
+    assert r2.status_code == 200
+    assert r2.json()["status"] == "FAIL"
+    assert r2.json()["fail_reason"] == "Invalid card"
 
 
 if __name__ == "__main__":
