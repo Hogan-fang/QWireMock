@@ -9,7 +9,8 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from qwire_mock.order_db import (
@@ -29,6 +30,16 @@ _stop_poller = threading.Event()
 
 # Callback service base URL for notifying on status change (e.g. http://localhost:8000)
 CALLBACK_SERVICE_URL = os.environ.get("CALLBACK_SERVICE_URL", "http://localhost:8000").rstrip("/")
+
+
+def _log_request_packet(route: str, payload: dict) -> None:
+    """Log request packet in callback-style pretty JSON format."""
+    logger.info("%s request packet:\n%s", route, json.dumps(payload, indent=2, ensure_ascii=False))
+
+
+def _log_response_packet(route: str, payload: dict) -> None:
+    """Log response packet in callback-style pretty JSON format."""
+    logger.info("%s response packet:\n%s", route, json.dumps(payload, indent=2, ensure_ascii=False))
 
 
 def _notify_callback_service(references: list[str]) -> None:
@@ -86,6 +97,39 @@ app = FastAPI(
 )
 
 
+@app.exception_handler(RequestValidationError)
+async def handle_request_validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+    """Convert UUID validation errors to business 400 payloads without FastAPI detail schema."""
+    has_reference_uuid_error = any(
+        "reference" in [str(loc) for loc in err.get("loc", [])]
+        and "uuid" in str(err.get("type", "")).lower()
+        for err in exc.errors()
+    )
+    if not has_reference_uuid_error:
+        return JSONResponse(status_code=422, content={"detail": exc.errors()})
+
+    if request.method == "POST" and request.url.path == "/order":
+        try:
+            req_payload = await request.json()
+        except Exception:
+            req_payload = {}
+
+        order_like_payload = req_payload if isinstance(req_payload, dict) else {}
+        for key in ("cvv", "expiry"):
+            order_like_payload.pop(key, None)
+        order_like_payload["status"] = "FAIL"
+        order_like_payload["fail_reason"] = "invalid UUID string"
+        _log_request_packet("POST /order", req_payload if isinstance(req_payload, dict) else {})
+        _log_response_packet("POST /order", order_like_payload)
+        return JSONResponse(status_code=400, content=order_like_payload)
+
+    error_payload = {"status": "FAIL", "fail_reason": "invalid UUID string"}
+    if request.method == "GET" and request.url.path == "/order":
+        _log_request_packet("GET /order", {"reference": request.query_params.get("reference")})
+        _log_response_packet("GET /order", error_payload)
+    return JSONResponse(status_code=400, content=error_payload)
+
+
 def _order_request_to_response(req: OrderRequest, order_id: str | None = None) -> OrderResponse:
     """Build OrderResponse from OrderRequest with generated orderId and orderDate."""
     order_date = datetime.now(tz=timezone.utc).isoformat().replace("+00:00", "Z")
@@ -108,6 +152,8 @@ def _order_request_to_response(req: OrderRequest, order_id: str | None = None) -
 @app.post("/order", response_model=OrderResponse, status_code=201)
 def create_order(body: OrderRequest) -> OrderResponse:
     """Add a new order to the system. orderId is generated from DB auto-increment id (PX+id)."""
+    _log_request_packet("POST /order", body.model_dump(mode="json"))
+
     if (body.cardNumber or "").strip().startswith("4"):
         if not order_exists(body.reference):
             order = _order_request_to_response(body, order_id=None)
@@ -117,16 +163,20 @@ def create_order(body: OrderRequest) -> OrderResponse:
         order_flat = body.model_dump(mode="json")
         for key in ("cvv", "expiry"):
             order_flat.pop(key, None)
+        error_payload = {**order_flat, "status": "FAIL", "fail_reason": "Invalid card"}
+        _log_response_packet("POST /order", error_payload)
         return JSONResponse(
             status_code=400,
-            content={**order_flat, "status": "FAIL", "reason": "Invalid card"},
+            content=error_payload,
         )
     if order_exists(body.reference):
         existing = get_order(body.reference)
         order_flat = existing.model_dump(mode="json") if existing else {}
+        error_payload = {**order_flat, "status": "FAIL", "fail_reason": "Order already exists"}
+        _log_response_packet("POST /order", error_payload)
         return JSONResponse(
             status_code=400,
-            content={**order_flat, "status": "FAIL", "reason": "Order already exists"},
+            content=error_payload,
         )
     order = _order_request_to_response(body, order_id=None)
     order_id = save_order(order, status="processing")
@@ -135,7 +185,7 @@ def create_order(body: OrderRequest) -> OrderResponse:
 
     payload = order.model_dump(mode="json")
     payload.pop("fail_reason", None)
-    logger.info("Order created:\n%s", json.dumps(payload, indent=2, ensure_ascii=False))
+    _log_response_packet("POST /order", payload)
     return JSONResponse(status_code=201, content=payload)
 
 
@@ -144,23 +194,39 @@ def search_order(
     reference: str = Query(..., description="Order reference (UUID)"),
 ) -> OrderResponse | JSONResponse:
     """Search order by reference."""
+    _log_request_packet("GET /order", {"reference": reference})
+
     try:
         ref_uuid = UUID(reference)
     except (ValueError, TypeError):
+        error_payload = {
+            "reference": reference,
+            "status": "FAIL",
+            "fail_reason": "invalid UUID string",
+        }
+        _log_response_packet("GET /order", error_payload)
         return JSONResponse(
             status_code=400,
-            content={"status": "FAIL", "reason": "invalid UUID string"},
+            content=error_payload,
         )
     order = get_order(ref_uuid)
     if order is None:
+        error_payload = {
+            "reference": reference,
+            "status": "FAIL",
+            "fail_reason": "Order not found",
+        }
+        _log_response_packet("GET /order", error_payload)
         return JSONResponse(
             status_code=400,
-            content={"status": "FAIL", "reason": "Order not found"},
+            content=error_payload,
         )
 
     payload = order.model_dump(mode="json")
     if order.fail_reason is None:
         payload.pop("fail_reason", None)
+
+    _log_response_packet("GET /order", payload)
 
     return JSONResponse(content=payload)
 

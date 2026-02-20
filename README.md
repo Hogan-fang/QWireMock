@@ -24,11 +24,50 @@ pip install -e ".[dev]"
 
 ## 使用
 
-以模块方式运行：
+先激活虚拟环境：
+
+```bash
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
+```
+
+以模块方式运行（默认同时启动 callback + order 两个服务）：
 
 ```bash
 python -m qwire_mock
 ```
+
+按服务单独启动：
+
+```bash
+# 仅启动 callback（默认端口 8000）
+python -m qwire_mock --service callback
+
+# 仅启动 order（默认端口 9000）
+python -m qwire_mock --service order
+
+# 同时启动 callback + order（默认）
+python -m qwire_mock --service all
+```
+
+指定监听地址：
+
+```bash
+python -m qwire_mock --host 127.0.0.1 --service order
+```
+
+默认地址与端口：
+
+- callback: `http://0.0.0.0:8000`
+- order: `http://0.0.0.0:9000`
+
+日志文件：
+
+- `callback.log`：callback 服务日志
+- `order.log`：order 服务日志（含请求/响应报文与 callback 通知日志）
+
+停止服务：
+
+- 在终端按 `Ctrl+C` 退出；退出码 `130` 属于手动中断，属于正常现象。
 
 或在代码中导入：
 
@@ -54,6 +93,12 @@ QWireMock/
 
 - 运行测试：`pytest`
 - 代码检查：`ruff check src tests`
+
+## 备注（Comments）
+
+- 本项目用于 Mock 联调与测试，默认日志会记录完整请求/响应报文。
+- 订单查询异常统一返回业务结构（`status` + `fail_reason`），不使用 FastAPI 默认 `detail` 结构。
+- 手动停止服务（`Ctrl+C`）时退出码为 `130`，属于正常现象。
 
 ---
 
@@ -97,8 +142,8 @@ Order 响应（OrderResponse）中的 `fail_reason` 仅在订单状态为 **FAIL
 ### 5. 各场景下的 status 取值（补充）
 
 - **POST /order 成功**：订单 `status = PROCESSING`，产品行 `status = PENDING`。
-- **POST /order 无效卡**：400，body 中 `status = FAIL`，`reason = "Invalid card"`。
-- **POST /order 订单已存在**：400，`status = FAIL`，`reason = "Order already exists"`，body 中其余为已存在订单信息。
+- **POST /order 无效卡**：400，body 中 `status = FAIL`，`fail_reason = "Invalid card"`。
+- **POST /order 订单已存在**：400，`status = FAIL`，`fail_reason = "Order already exists"`，body 中其余为已存在订单信息。
 - **GET /order 查到订单**：200，body 中 `status` 为库中订单状态的大写（PROCESSING / FAIL / COMPLETE 等）。
 
 ### 6. UUID 校验与无效 reference
@@ -106,19 +151,19 @@ Order 响应（OrderResponse）中的 `fail_reason` 仅在订单状态为 **FAIL
 GET /order 的查询参数 **reference 必须是合法 UUID 字符串**；服务会用 `UUID(reference)` 做校验。
 
 - **reference 不是合法 UUID**（格式错误、非 UUID 字符串）：返回 **400**，body 为  
-  `{"status": "FAIL", "reason": "invalid UUID string"}`；不返回 FastAPI 校验产生的 `detail` 等嵌套结构。
-- **reference 为合法 UUID 但订单不存在**：返回 **400**，body 为 `{"status": "FAIL", "reason": "Order not found"}`；不返回 `detail`。
+  `{"reference": "<原始入参>", "status": "FAIL", "fail_reason": "invalid UUID string"}`；不返回 FastAPI 校验产生的 `detail` 等嵌套结构。
+- **reference 为合法 UUID 但订单不存在**：返回 **400**，body 为 `{"reference": "<原始入参>", "status": "FAIL", "fail_reason": "Order not found"}`。
 
 ### 7. 错误与 400 情况汇总
 
 | 情况 | HTTP | 说明 |
 |------|------|------|
-| 无效卡（卡号以 4 开头） | 400 | `status=FAIL`，`reason="Invalid card"` |
-| 订单已存在（重复 reference） | 400 | `status=FAIL`，`reason="Order already exists"`，其余为已存在订单信息 |
-| GET reference 非合法 UUID | 400 | `status=FAIL`，`reason="invalid UUID string"` |
-| GET reference 合法但订单不存在 | 400 | `status=FAIL`，`reason="Order not found"` |
+| 无效卡（卡号以 4 开头） | 400 | `status=FAIL`，`fail_reason="Invalid card"` |
+| 订单已存在（重复 reference） | 400 | `status=FAIL`，`fail_reason="Order already exists"`，其余为已存在订单信息 |
+| GET reference 非合法 UUID | 400 | `reference=<原始入参>`，`status=FAIL`，`fail_reason="invalid UUID string"` |
+| GET reference 合法但订单不存在 | 400 | `reference=<原始入参>`，`status=FAIL`，`fail_reason="Order not found"` |
 
-以上 400 响应统一为同一结构：仅包含 `status` 与 `reason`，无 `detail` 或嵌套对象。
+以上 400 响应统一为同一结构：仅包含 `status` 与 `fail_reason`，无 `detail` 或嵌套对象。
 
 ### 8. 其他说明
 
