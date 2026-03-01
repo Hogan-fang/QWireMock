@@ -1,9 +1,9 @@
 openapi: 3.0.0
 
 info:
-  title: Callback API
-  version: "1.0.0"
-  description: This is a simple callback API
+  title: QWire Callback API v2
+  version: "2.0.0"
+  description: Callback receiving API with log-only query behavior
   contact:
     email: you@your-company.com
   license:
@@ -11,17 +11,15 @@ info:
     url: http://www.apache.org/licenses/LICENSE-2.0.html
 
 servers:
-  - url: https://api.example.com/v1
-    description: Production server
-  - url: https://virtserver.swaggerhub.com/HOGANHFANG/callback/1.0.0
-    description: SwaggerHub API Auto Mocking
+  - url: http://127.0.0.1:8100
+    description: Local callback server
 
 paths:
   /check:
     get:
       summary: Check order callback
       operationId: check
-      description: Check the callback infomation
+      description: Callback records are log-only and not queryable
       parameters:
         - in: query
           name: reference
@@ -31,19 +29,17 @@ paths:
             type: string
             format: uuid
       responses:
-        '200':
-          description: Order found
+        '404':
+          description: Callback records are log-only and not queryable
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/OrderResponse'
-        '400':
-          description: Invalid input parameter
-        '404':
-          description: Order not found
+                $ref: '#/components/schemas/ErrorDetailResponse'
+        '422':
+          description: Invalid UUID query parameter
   /callback:
     post:
-      summary: order status callback
+      summary: Order status callback
       operationId: callback
       description: Receive callback from order system
       requestBody:
@@ -61,9 +57,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/Received'
         '400':
-          description: Invalid information
-        '409':
-          description: Order not exist
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorResponse'
 
 components:
 
@@ -73,11 +71,37 @@ components:
     # =========================
     Received:
       type: object
+      required:
+        - message
       properties:
         message:
           type: string
           format: string
           example: OK
+
+    ErrorDetailResponse:
+      type: object
+      required:
+        - detail
+      properties:
+        detail:
+          type: string
+          example: Callback records are log-only and not queryable
+
+    ValidationErrorResponse:
+      type: object
+      required:
+        - message
+        - errors
+      properties:
+        message:
+          type: string
+          example: Invalid order payload
+        errors:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
 
     # =========================
     # Order Schemas
@@ -85,7 +109,17 @@ components:
 
     OrderResponse:
       type: object
-      description: 查询/回调结果返回掩码卡号（前6后4），不包含CVV与有效期
+      description: Query/callback result returns a masked card number (first 6 and last 4 visible), without CVV and expiry
+      required:
+        - reference
+        - orderId
+        - name
+        - orderDate
+        - amount
+        - currency
+        - status
+        - cardNumber
+        - products
       properties:
         reference:
           type: string
@@ -105,24 +139,24 @@ components:
         amount:
           type: number
           format: double
-          description: 金额
+          description: Amount
           example: 99.99
         currency:
           type: string
-          description: 币种
+          description: Currency
           example: "USD"
         status:
           type: string
           description: Order status (uppercase)
-          enum: [PROCESSING, FAIL, COMPLETE]
-          example: PROCESSING
+          enum: [SUCCESS, COMPLETED, FAIL]
+          example: SUCCESS
         fail_reason:
           type: string
-          description: 失败原因，仅 status 为 FAIL 时有值
+          description: Failure reason, only present when status is FAIL
           nullable: true
         cardNumber:
           type: string
-          description: 掩码卡号（前6后4位可见）
+          description: Masked card number (first 6 and last 4 digits visible)
           example: "555555******4444"
         products:
           type: array
@@ -160,5 +194,6 @@ components:
           properties:
             status:
               type: string
-              description: Product status (pending, shipped, complete)
-              example: shipped
+              description: Product status (uppercase)
+              enum: [PROCESSING, SHIPPED, DELIVERED, FAIL]
+              example: PROCESSING

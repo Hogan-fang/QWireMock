@@ -1,0 +1,21 @@
+server:
+  host: 0.0.0.0
+  callback_port: 8100
+  order_port: 9100
+
+mysql:
+  host: localhost
+  port: 3306
+  user: qwire
+  password: Qwire2026
+  database: qwire
+  charset: utf8mb4
+
+order:
+  poll_interval_seconds: 5
+  callback_skip_amount_gte: 1000
+
+logging:
+  format: "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+  order_log: order.log
+  callback_log: callback.log

@@ -14,6 +14,7 @@ dependencies = [
     "fastapi>=0.104.0",
     "uvicorn[standard]>=0.24.0",
     "pydantic>=2.0.0",
+    "PyYAML>=6.0.1",
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -45,6 +46,7 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 markers = [
     "integration: integration tests (start callback + order servers, need MySQL, ~75s)",
+    "v2_integration: v2 integration tests with real MySQL persistence",
 ]
 filterwarnings = [
     "ignore::pytest.PytestAssertRewriteWarning",

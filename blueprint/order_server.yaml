@@ -1,9 +1,9 @@
 openapi: 3.0.0
 
 info:
-  title: Simple Order API
-  version: "1.0.0"
-  description: This is a simple Order management API
+  title: QWire Order API v2
+  version: "2.0.0"
+  description: Order create/query API with MySQL persistence and scheduled status transitions
   contact:
     email: you@your-company.com
   license:
@@ -11,10 +11,8 @@ info:
     url: http://www.apache.org/licenses/LICENSE-2.0.html
 
 servers:
-  - url: https://api.example.com/v1
-    description: Production server
-  - url: https://virtserver.swaggerhub.com/HOGANHFANG/online_order/1.0.0
-    description: SwaggerHub API Auto Mocking
+  - url: http://127.0.0.1:9100
+    description: Local order server
 
 paths:
 
@@ -43,9 +41,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/InvalidReferenceResponse'
+                $ref: '#/components/schemas/OrderQueryErrorResponse'
         '404':
           description: Order not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderQueryErrorResponse'
 
     post:
       summary: Create order
@@ -66,11 +68,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/OrderResponse'
         '400':
-          description: Invalid input (e.g. invalid card) or order already exists, see reason
+          description: Invalid input (e.g. unsupported card type) or order already exists
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/OrderErrorResponse'
+                oneOf:
+                  - $ref: '#/components/schemas/OrderResponse'
+                  - $ref: '#/components/schemas/OrderCreateErrorResponse'
 
 components:
 
@@ -106,7 +110,7 @@ components:
           example: http://www.xxx.com
         cardNumber:
           type: string
-          description: 卡号
+          description: Card number
           example: "4111111111111111"
         cvv:
           type: string
@@ -114,16 +118,16 @@ components:
           example: "123"
         expiry:
           type: string
-          description: 有效期，如 MM/YY
+          description: Expiry date, e.g. MM/YY
           example: "12/28"
         amount:
           type: number
           format: double
-          description: 金额
+          description: Amount
           example: 99.99
         currency:
           type: string
-          description: 币种，如 USD、CNY
+          description: Currency, e.g. USD, CNY
           example: "USD"
         products:
           type: array
@@ -132,7 +136,17 @@ components:
 
     OrderResponse:
       type: object
-      description: 查询结果返回掩码卡号（前6后4），不包含CVV与有效期
+      description: Query result returns a masked card number (first 6 and last 4 visible), without CVV and expiry
+      required:
+        - reference
+        - orderId
+        - name
+        - orderDate
+        - amount
+        - currency
+        - status
+        - cardNumber
+        - products
       properties:
         reference:
           type: string
@@ -152,59 +166,61 @@ components:
         amount:
           type: number
           format: double
-          description: 金额
+          description: Amount
           example: 99.99
         currency:
           type: string
-          description: 币种
+          description: Currency
           example: "USD"
         status:
           type: string
           description: Order status (uppercase)
-          enum: [PROCESSING, FAIL, COMPLETE]
-          example: PROCESSING
+          enum: [SUCCESS, COMPLETED, FAIL]
+          example: SUCCESS
         fail_reason:
           type: string
-          description: 失败原因，仅 status 为 FAIL 时有值
+          description: Failure reason, only present when status is FAIL
           nullable: true
         cardNumber:
           type: string
-          description: 掩码卡号（前6后4位可见）
+          description: Masked card number (first 6 and last 4 visible)
           example: "555555******4444"
         products:
           type: array
           items:
             $ref: '#/components/schemas/ProductResponse'
 
-    # GET /order 400: reference 非合法 UUID
-    InvalidReferenceResponse:
+    OrderQueryErrorResponse:
       type: object
       required:
         - status
-        - reason
+        - fail_reason
+        - reference
       properties:
         status:
           type: string
           enum: [FAIL]
           example: FAIL
-        reason:
+        fail_reason:
           type: string
-          example: "invalid UUID string"
+          example: "Order not found"
+        reference:
+          type: string
+          description: Raw query value
 
-    # 400: status、reason 与订单字段同层，无 detail/order 嵌套
-    OrderErrorResponse:
+    OrderCreateErrorResponse:
       type: object
       required:
         - status
-        - reason
+        - fail_reason
       properties:
         status:
           type: string
           enum: [FAIL]
           example: FAIL
-        reason:
+        fail_reason:
           type: string
-          example: Invalid card
+          example: "Order already exists"
         reference:
           type: string
           format: uuid
@@ -225,7 +241,7 @@ components:
             $ref: '#/components/schemas/ProductResponse'
         cardNumber:
           type: string
-          description: 仅 400 无效卡时可能返回
+          description: May be returned only for 400 invalid-card responses
 
     # =========================
     # Product Schemas
@@ -262,5 +278,6 @@ components:
           properties:
             status:
               type: string
-              description: Product status (uppercase: PENDING, SHIPPED, COMPLETE)
+              description: Product status (uppercase)
+              enum: [PROCESSING, SHIPPED, DELIVERED, FAIL]
               example: SHIPPED

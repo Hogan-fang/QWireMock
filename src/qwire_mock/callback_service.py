@@ -1,61 +1,74 @@
-"""FastAPI app: callback (receive & cache by reference), check, list (all cached), clear (cache)."""
-
 import json
 import logging
+import os
+from contextlib import asynccontextmanager
 from uuid import UUID
 
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import Response
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 
+from qwire_mock.config import load_config
 from qwire_mock.schemas import OrderResponse, Received
-from qwire_mock.store import order_store
 
 logger = logging.getLogger(__name__)
+CONFIG = load_config()
+LOGGING_CONFIG = CONFIG["logging"]
 
-app = FastAPI(
-    title="Callback API",
-    version="1.0.0",
-    description="Callback receive and check by reference",
-)
+
+def _ensure_file_logger() -> None:
+    logger.setLevel(logging.INFO)
+    callback_log_path = LOGGING_CONFIG["callback_log"]
+    existing = [
+        handler
+        for handler in logger.handlers
+        if isinstance(handler, logging.FileHandler)
+        and os.path.basename(getattr(handler, "baseFilename", "")) == os.path.basename(callback_log_path)
+    ]
+    if existing:
+        return
+
+    file_handler = logging.FileHandler(callback_log_path, encoding="utf-8")
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
+    logger.addHandler(file_handler)
+
+
+_ensure_file_logger()
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    logger.info("callback service startup")
+    try:
+        yield
+    finally:
+        logger.info("callback service shutdown")
+
+app = FastAPI(title="QWire Callback API v2", version="2.0.0", lifespan=lifespan)
+
+
+def _json(payload: dict) -> str:
+    return json.dumps(payload, ensure_ascii=False, indent=2, default=str)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    logger.warning("Invalid callback payload: %s", exc.errors())
+    return JSONResponse(status_code=400, content={"message": "Invalid order payload", "errors": exc.errors()})
 
 
 @app.post("/callback", response_model=Received)
 def callback(body: OrderResponse) -> Received:
-    """Receive callback from order system; cache by reference."""
     payload = body.model_dump(mode="json")
-    logger.info("Callback received:\n%s", json.dumps(payload, indent=2, ensure_ascii=False))
-    order_store.put(body.reference, body)
-    return Received(message="OK")
+    logger.info("POST /callback request:\n%s", _json(payload))
+
+    response = Received(message="OK")
+    logger.info("POST /callback response:\n%s", _json(response.model_dump(mode="json")))
+    return response
 
 
-@app.get("/check", response_model=OrderResponse)
-def check(reference: UUID = Query(..., description="Order reference (UUID)")) -> OrderResponse:
-    """Return cached order for the given reference."""
-    order = order_store.get(reference)
-    if order is None:
-        raise HTTPException(status_code=404, detail="Order not found")
-    return order
-
-
-@app.get("/list", response_model=None)
-def list_callbacks(
-    pretty: bool = Query(False, description="Return pretty-printed JSON for readability"),
-):
-    """List all cached callback data (received via POST /callback). Use ?pretty=1 for formatted output."""
-    data = order_store.list_all()
-    if pretty:  # Return indented JSON for human reading
-        content = json.dumps(
-            [o.model_dump(mode="json") for o in data],
-            indent=2,
-            ensure_ascii=False,
-        )
-        return Response(content=content, media_type="application/json")
-    return data
-
-
-@app.delete("/clear", response_model=dict)
-def clear_callbacks() -> dict:
-    """Clear all cached callback data."""
-    count = order_store.clear()
-    logger.info("Callback cache cleared: %s entries", count)
-    return {"message": "OK", "cleared": count}
+@app.get("/check")
+def check(reference: UUID = Query(..., description="Order reference (UUID)")):
+    logger.info("GET /check reference=%s -> callback records are log-only, no persisted query", reference)
+    raise HTTPException(status_code=404, detail="Callback records are log-only and not queryable")

@@ -1,0 +1,47 @@
+specVersion: "1.0"
+service: "order-service"
+status: "draft"
+
+purpose:
+  - "提供与 order_server.yaml 对齐的订单创建与查询能力"
+  - "为 callback server 提供标准化订单状态数据"
+  - 将订单记录到数据库中，并提供查询接口
+  - 在订单创建或状态变更时，触发回调事件发布  
+
+functionalModules:
+  - name: "order-api"
+    responsibilities:
+      - "接收 POST /order 创建请求"
+      - "处理 GET /order?reference=uuid 查询请求"
+      - "返回与 OpenAPI schema 一致的响应结构"
+  - name: "order-store"
+    responsibilities:
+      - "订单持久化抽象（mysql）"
+      - "按 reference（UUID）检索，按 orderId 补充索引"
+  - name: "payment-masker"
+    responsibilities:
+      - "响应中对 cardNumber 做前6后4掩码"
+      - "确保响应不包含 CVV 与 expiry"
+  - name: "event-publisher"
+    responsibilities:
+      - "订单创建或状态变化后触发回调事件"
+
+behavior:
+  - "对于4开头的支付卡号，返回400错误，表示不支持的卡类型"
+  - "当支付成功时，不应返回敏感信息，如 CVV 和 expiry，cardNumber 应为掩码格式（前6后4可见）"
+  - "只有支付失败时才返回fail_reason字段，且该字段应描述失败原因"
+  - "不论何种失败原因，订单状态均为 FAIL"
+  - "所有返回的状态都应为字符串类型，并大写"
+  - "订单查询时，如果 reference 格式不合法，应返回 400 错误，并提供明确的错误信息"
+  - "订单被接受后，订单状态应先为 SUCCESS；商品状态应为 PROCESSING"
+  - "订单创建后约30秒，商品状态应从 PROCESSING 变为 SHIPPED，并触发 ORDER_SHIPPED 回调事件"
+  - "订单创建后约60秒，商品状态应从 SHIPPED 变为 DELIVERED，并触发 ORDER_DELIVERED 回调事件"
+  - "当且仅当全部商品均为 DELIVERED 时，订单状态应从 SUCCESS 变为 COMPLETED，并触发 ORDER_COMPLETED 回调事件"
+  - "订单创建成功时应触发 ORDER_SUCCESS 回调事件"
+
+testScenarios:
+  - "POST /order 创建订单成功返回 201 + OrderResponse"
+  - "GET /order 使用非法 UUID 返回 400 + InvalidReferenceResponse"
+  - "GET /order 查询不存在 reference 返回 404"
+  - "OrderResponse 中 cardNumber 为掩码且不包含 cvv/expiry"
+  - "订单状态与商品状态流转：订单 SUCCESS→COMPLETED，商品 PROCESSING→SHIPPED→DELIVERED"

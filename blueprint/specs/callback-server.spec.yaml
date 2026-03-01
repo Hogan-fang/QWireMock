@@ -1,0 +1,34 @@
+specVersion: "1.0"
+service: "callback-server"
+status: "draft"
+
+purpose:
+  - "模拟发起方 callback API，契约对齐 callback_server.yaml"
+  - "支持订单系统回调接收与回调结果查询"
+
+functionalModules:
+  - name: "callback-check-api"
+    responsibilities:
+      - "接收 GET /check?reference=uuid 查询请求"
+      - "返回 OrderResponse / 400 / 404"
+  - name: "callback-receiver-api"
+    responsibilities:
+      - "接收 POST /callback 回调请求"
+      - "返回 200(Received) / 400 / 409"
+  - name: "callback-record-store"
+    responsibilities:
+      - "记录回调请求体、响应、时间戳到日志文件"
+      - "不做数据库持久化"
+
+behavior:
+  - "对订单金额进行规划，实现有正常回调，无回调"
+  - "回调信息只输出到日志文件"
+  - "回调检查接口不提供持久化查询能力"
+  - "回调服务收到的信息和发出的信息都要记录到可阅读的日志中"
+  - "在检查回调信息时统一返回 404（回调记录仅日志，不可查询）"
+  - "回调事件类型应覆盖 ORDER_SUCCESS、ORDER_SHIPPED、ORDER_DELIVERED、ORDER_COMPLETED"
+  - "在接收回调时，对于合法的 OrderResponse 返回 200 和 Received"
+  - "在接收回调时，对于不合法的 OrderResponse 返回 400 和 订单无效的错误信息"
+
+testScenarios:
+  - "编写覆盖全部行文的测试用例" 

@@ -1,5 +1,3 @@
-"""QWire Mock - Callback API service."""
+"""QWire mock services v2 package."""
 
-__version__ = "0.1.0"
-
-from qwire_mock.callback import app
+__version__ = "2.0.0"
