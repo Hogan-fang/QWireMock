@@ -1,0 +1,47 @@
+specVersion: "1.0"
+service: "order-service"
+status: "draft"
+
+purpose:
+  - "Provide order create/query capability aligned with order_server.yaml"
+  - "Provide standardized order status data for callback server"
+  - "Persist order records in MySQL and expose query API"
+  - "Publish callback events on order creation and status transitions"
+
+functionalModules:
+  - name: "order-api"
+    responsibilities:
+      - "Handle POST /order create requests"
+      - "Handle GET /order?reference=uuid query requests"
+      - "Return response payloads aligned with OpenAPI schema"
+  - name: "order-store"
+    responsibilities:
+      - "Order persistence abstraction (MySQL)"
+      - "Lookup by reference (UUID), with orderId index support"
+  - name: "payment-masker"
+    responsibilities:
+      - "Mask cardNumber in response (first 6 and last 4 visible)"
+      - "Ensure CVV and expiry are not returned"
+  - name: "event-publisher"
+    responsibilities:
+      - "Publish callback events after order creation and status transitions"
+
+behavior:
+  - "For card numbers starting with 4, return 400 as unsupported card type"
+  - "On successful payment, do not return sensitive fields (CVV/expiry); cardNumber must be masked"
+  - "Return fail_reason only when status is FAIL"
+  - "For all failure reasons, order status must be FAIL"
+  - "All returned status values must be uppercase strings"
+  - "For invalid reference format in order query, return 400 with explicit error message"
+  - "After order acceptance, order status starts as SUCCESS and product status starts as PROCESSING"
+  - "About 30 seconds after creation, product status transitions PROCESSING -> SHIPPED and emits ORDER_SHIPPED"
+  - "About 60 seconds after creation, product status transitions SHIPPED -> DELIVERED and emits ORDER_DELIVERED"
+  - "Only when all products are DELIVERED, order status transitions SUCCESS -> COMPLETED and emits ORDER_COMPLETED"
+  - "On successful order creation, emit ORDER_SUCCESS"
+
+testScenarios:
+  - "POST /order returns 201 + OrderResponse on success"
+  - "GET /order with invalid UUID returns 400 + explicit fail payload"
+  - "GET /order with non-existing reference returns 404"
+  - "OrderResponse masks cardNumber and does not include cvv/expiry"
+  - "Status lifecycle is enforced: order SUCCESS->COMPLETED, product PROCESSING->SHIPPED->DELIVERED"

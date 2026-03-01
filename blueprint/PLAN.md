@@ -76,8 +76,11 @@
 - 回调请求与响应可在日志文件中检索与审计。
 
 ## 6. 数据库连接信息
-    "host": os.environ.get("QWIRE_MYSQL_HOST", "localhost"),
-    "port": int(os.environ.get("QWIRE_MYSQL_PORT", "3306")),
-    "user": os.environ.get("QWIRE_MYSQL_USER", "qwire"),
-    "password": os.environ.get("QWIRE_MYSQL_PASSWORD", "Qwire2026"),
-    "database": os.environ.get("QWIRE_MYSQL_DATABASE", "qwire"),
+- host: localhost
+- port: 3306
+- user: qwire
+- password: Qwire2026
+- database: qwire
+
+## 7. 文档规范
+- 除PLAN.md和spec的文档采用中英双语外,其他文档都用英文

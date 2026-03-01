@@ -1,0 +1,34 @@
+specVersion: "1.0"
+service: "callback-server"
+status: "draft"
+
+purpose:
+  - "Simulate the callback receiver API aligned with callback_server.yaml"
+  - "Support order-system callback receiving and callback visibility through logs"
+
+functionalModules:
+  - name: "callback-check-api"
+    responsibilities:
+      - "Handle GET /check?reference=uuid requests"
+      - "Return 404 because callback records are log-only and not queryable"
+  - name: "callback-receiver-api"
+    responsibilities:
+      - "Handle POST /callback callback payloads"
+      - "Return 200 (Received) for valid payloads and 400 for invalid payloads"
+  - name: "callback-record-store"
+    responsibilities:
+      - "Write callback request/response and timestamps into log files"
+      - "Do not persist callback records into database"
+
+behavior:
+  - "Support both callback and no-callback paths based on order amount policy"
+  - "Callback payload records are output to log files only"
+  - "Callback check API has no persistence query capability"
+  - "Both received callback payloads and response payloads must be logged in readable format"
+  - "GET /check always returns 404 (callback records are log-only)"
+  - "Callback event types cover ORDER_SUCCESS, ORDER_SHIPPED, ORDER_DELIVERED, ORDER_COMPLETED"
+  - "For valid OrderResponse payload in POST /callback, return 200 with Received"
+  - "For invalid OrderResponse payload in POST /callback, return 400 with invalid-order message and validation details"
+
+testScenarios:
+  - "Provide tests that cover callback success, validation failure, and check endpoint behavior"
